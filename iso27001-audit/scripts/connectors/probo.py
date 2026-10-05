@@ -1,0 +1,499 @@
+"""Probo connector: pull an ISO/IEC 27001 evidence bundle from Probo (probo.com or self-hosted).
+
+Probo exposes every entity through its MCP API. This connector speaks that API
+directly over HTTP (JSON-RPC), so it runs from any agent or from a plain shell,
+with or without MCP support in the agent.
+
+Probo model -> bundle:
+  Framework "ISO 27001" controls (4.1 ... 10.2, A.5.1 ... A.8.34) -> requirements
+  Measures (what the organization implemented)  -> controls.csv rows, requirements via control links
+  Statement of Applicability and its statements -> soa.csv
+  Measure evidences (files and links)            -> evidence artifacts
+  Documents (latest published version, linked to a framework control or a
+  measure, with approver and signature states)   -> policy artifacts
+  People (contract start / end)                  -> hires and terminations populations
+  Third parties                                  -> vendors population
+  Findings (nonconformities)                     -> nonconformities population and register export
+  Audits and their reports                       -> internal audit evidence
+  Risks, treatment plans, obligations, assets, data, access reviews -> evidence exports (JSON)
+  Organization context                           -> draft isms.yaml for the organization to complete
+
+Options (engagement.yaml source.options):
+  url              Probo instance root, default https://us.probo.com
+  organization_id  required
+  framework_id     optional; defaults to the framework whose name contains "27001"
+  soa_id           optional; defaults to the most recently updated Statement of Applicability
+Environment:
+  PROBO_TOKEN      OAuth access token with read scopes
+"""
+
+from __future__ import annotations
+
+import itertools
+import json
+import os
+import urllib.error
+import urllib.parse
+import urllib.request
+
+from core import AuditError, parse_date
+
+from .base import BundleWriter, find_criteria, slug
+
+PAGE_SIZE = 100  # Largest page the API accepts; keeps request count low for big orgs.
+
+
+class ProboMCP:
+    """Minimal MCP-over-HTTP client: initialize once, then call tools."""
+
+    def __init__(self, base_url: str, token: str):
+        self.url = base_url.rstrip("/") + "/api/mcp/v1"
+        self.token = token
+        self.session_id = None
+        self._ids = itertools.count(1)
+        self._rpc("initialize", {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "iso27001-audit", "version": "1"}})
+        self._rpc("notifications/initialized", None, notify=True)
+
+    def call(self, tool: str, **arguments) -> dict:
+        result = self._rpc("tools/call", {"name": tool, "arguments": arguments})
+        if result.get("isError"):
+            text = " ".join(c.get("text", "") for c in result.get("content", []))
+            raise AuditError(f"Probo tool {tool} failed: {text[:300]}")
+        if isinstance(result.get("structuredContent"), dict):
+            return result["structuredContent"]
+        for content in result.get("content", []):
+            if content.get("type") == "text":
+                return json.loads(content["text"])
+        return {}
+
+    def pages(self, tool: str, key: str, **arguments):
+        """Yield every item across cursor-paginated results.
+
+        A short page is the last page. Probo still returns next_cursor for
+        signature and approval lists in that case, and the following request
+        fails with an internal server error (the cursor predicate uses an
+        unqualified id, which is ambiguous on those joined queries).
+        """
+        cursor = None
+        while True:
+            args = dict(arguments, size=PAGE_SIZE)
+            if cursor:
+                args["cursor"] = cursor
+            out = self.call(tool, **args)
+            items = out.get(key) or []
+            yield from items
+            cursor = out.get("next_cursor")
+            if not cursor or len(items) < PAGE_SIZE:
+                return
+
+    def _rpc(self, method: str, params, notify: bool = False):
+        body = {"jsonrpc": "2.0", "method": method}
+        if not notify:
+            body["id"] = next(self._ids)
+        if params is not None:
+            body["params"] = params
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            "Authorization": f"Bearer {self.token}",
+        }
+        if self.session_id:
+            headers["Mcp-Session-Id"] = self.session_id
+        req = urllib.request.Request(self.url, data=json.dumps(body).encode(), headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                self.session_id = resp.headers.get("Mcp-Session-Id") or self.session_id
+                raw = resp.read().decode()
+                ctype = resp.headers.get("Content-Type", "")
+        except urllib.error.HTTPError as e:
+            raise AuditError(f"Probo MCP {method} failed with HTTP {e.code}: {e.read().decode(errors='replace')[:300]}") from e
+        if notify:
+            return None
+        if "text/event-stream" in ctype:
+            messages = [json.loads(line[5:]) for line in raw.splitlines() if line.startswith("data:")]
+            reply = next((m for m in messages if m.get("id") == body["id"]), messages[-1] if messages else {})
+        else:
+            reply = json.loads(raw)
+        if reply.get("error"):
+            raise AuditError(f"Probo MCP {method} error: {reply['error'].get('message')}")
+        return reply.get("result", {})
+
+
+def evidence_file(base: str, token: str, evidence_id: str) -> dict | None:
+    """The download link for an uploaded file. MCP listMeasureEvidences leaves url empty; the console API returns it on file.downloadUrl, with the original file name."""
+    query = "query($id: ID!) { node(id: $id) { ... on Evidence { file { fileName downloadUrl } } } }"
+    req = urllib.request.Request(
+        base.rstrip("/") + "/api/console/v1/graphql",
+        data=json.dumps({"query": query, "variables": {"id": evidence_id}}).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": f"Bearer {token}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            payload = json.loads(resp.read().decode())
+    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError):
+        return None
+    if payload.get("errors"):
+        return None
+    file = ((payload.get("data") or {}).get("node") or {}).get("file") or {}
+    if not file.get("downloadUrl"):
+        return None
+    return file
+
+
+def approval_line(decisions: list, signers: dict, error: str | None = None) -> str:
+    """Name the approver. PUBLISHED does not. A failed call is not written as 'none recorded'."""
+    if error:
+        return f"Approval: not retrieved ({error})"
+    approved = [d for d in decisions if d.get("state") == "APPROVED"]
+    if not approved:
+        return "Approval: none recorded on this version"
+    parts = []
+    for decision in approved:
+        who = signers.get(decision.get("approver_id"), decision.get("approver_id") or "unknown")
+        when = (decision.get("decided_at") or "")[:10]
+        parts.append(f"{who} APPROVED" + (f" {when}" if when else ""))
+    return "Approval: " + "; ".join(parts)
+
+
+def signature_line(signatures: list, signers: dict, error: str | None = None) -> str:
+    """One line an auditor can check without opening Probo. Names come from the people export when the signatory id matches."""
+    if error:
+        return f"Signatures: not retrieved ({error})"
+    if not signatures:
+        return "Signatures: none recorded on this version"
+    parts = []
+    for sig in signatures:
+        who = signers.get(sig.get("signed_by"), sig.get("signed_by") or "unknown")
+        when = (sig.get("signed_at") or sig.get("requested_at") or "")[:10]
+        parts.append(f"{who} {sig.get('state') or 'UNKNOWN'}" + (f" {when}" if when else ""))
+    return "Signatures: " + "; ".join(parts)
+
+
+def pull(writer: BundleWriter, options: dict, engagement) -> None:
+    base = options.get("url", "https://us.probo.com").rstrip("/")
+    org = options.get("organization_id")
+    token = os.environ.get("PROBO_TOKEN")
+    if not org:
+        raise AuditError("Probo connector needs source.options.organization_id in engagement.yaml.")
+    if not token:
+        raise AuditError("Set PROBO_TOKEN to a Probo OAuth access token with read scopes.")
+    writer.source = f"{base} organization {org}"
+    api = ProboMCP(base, token)
+    start, end = engagement.period
+    failed_tools = set()
+
+    def fetch(tool: str, key: str, **arguments) -> tuple[list, str | None]:
+        try:
+            return list(api.pages(tool, key, **arguments)), None
+        except AuditError as e:
+            if tool not in failed_tools:
+                writer.warn(f"{tool}: {e}")
+                failed_tools.add(tool)
+            return [], str(e)
+
+    def listed(tool: str, key: str, **arguments) -> list:
+        items, _error = fetch(tool, key, **arguments)
+        return items
+
+    def export(items, name: str, title: str, requirements=(), source_ref: str = "") -> None:
+        writer.add_bytes(json.dumps(items, indent=2), f"{slug(name)}.json", title=title, requirements=requirements, source_ref=source_ref)
+
+    # 1. Framework and its requirements (clauses and Annex A controls).
+    framework_id = options.get("framework_id")
+    if not framework_id:
+        frameworks = list(api.pages("listFrameworks", "frameworks", organization_id=org))
+        iso = sorted((f for f in frameworks if "27001" in f["name"]), key=lambda f: "2022" not in f["name"])
+        if not iso:
+            names = ", ".join(f["name"] for f in frameworks) or "none"
+            raise AuditError(f"No ISO 27001 framework found in Probo (frameworks: {names}). Set source.options.framework_id.")
+        framework_id = iso[0]["id"]
+    requirements = list(api.pages("listControls", "controls", organization_id=org, filter={"framework_id": framework_id}))
+    req_ids: dict[str, list[str]] = {}
+    for req in requirements:
+        section = req.get("section_title") or ""
+        ids = find_criteria(section, annex=section.strip().upper().startswith("A")) or find_criteria(req.get("name"))
+        if not ids:
+            writer.warn(f"framework control '{section} {req.get('name')}' has no recognizable ISO/IEC 27001:2022 requirement ID")
+        req_ids[req["id"]] = ids
+
+    # 2. Measures are the organization's controls; requirements come from the framework controls they link to.
+    measures: dict[str, dict] = {}
+    measure_reqs: dict[str, list[str]] = {}
+    requirement_measures: dict[str, list[str]] = {}
+    for req in requirements:
+        for m in api.pages("listControlMeasures", "measures", control_id=req["id"]):
+            measures[m["id"]] = m
+            measure_reqs.setdefault(m["id"], [])
+            requirement_measures.setdefault(req["id"], []).append(m["id"])
+            for c in req_ids[req["id"]]:
+                if c not in measure_reqs[m["id"]]:
+                    measure_reqs[m["id"]].append(c)
+
+    ordered = sorted(measures.values(), key=lambda m: (m.get("category") or "", m["name"]))
+    control_id = {m["id"]: f"M-{i:03d}" for i, m in enumerate(ordered, 1)}
+    rows = []
+    for m in ordered:
+        if m.get("state") == "NOT_APPLICABLE":
+            writer.warn(f"measure '{m['name']}' is marked not applicable in Probo and is excluded")
+            continue
+        if m.get("state") not in ("IMPLEMENTED", None):
+            writer.warn(f"measure '{m['name']}' has state {m.get('state')} in Probo")
+        rows.append({
+            "id": control_id[m["id"]],
+            "title": m["name"],
+            "description": m.get("description") or m["name"],
+            "criteria": measure_reqs.get(m["id"], []),
+            "source_ref": f"probo:measure/{m['id']}",
+        })
+
+    # 3. Statement of Applicability. Probo keeps it as statements against framework controls.
+    soas = listed("listStatementsOfApplicability", "statements_of_applicability", organization_id=org)
+    soa_id = options.get("soa_id") or (max(soas, key=lambda s: s.get("updated_at") or "")["id"] if soas else None)
+    soa_doc = None
+    if soa_id:
+        chosen = next((s for s in soas if s["id"] == soa_id), {})
+        soa_doc = chosen.get("document_id")
+        by_req = {r["id"]: r for r in requirements}
+        soa_rows = []
+        for st in listed("listApplicabilityStatements", "applicability_statements", statement_of_applicability_id=soa_id):
+            req = by_req.get(st.get("control_id"))
+            ids = [x for x in (req_ids.get(req["id"], []) if req else []) if x.startswith("A.")]
+            if not ids:
+                continue
+            states = [measures[mid].get("state") for mid in requirement_measures.get(req["id"], []) if mid in measures]
+            status = ("implemented" if states and all(s == "IMPLEMENTED" for s in states)
+                      else "partial" if any(s == "IMPLEMENTED" for s in states) else "not-implemented" if states else "")
+            soa_rows.append({"control": ids[0], "applicable": bool(st.get("applicability")), "justification": st.get("justification") or "",
+                             "status": status, "reference": chosen.get("name") or ""})
+        if soa_rows:
+            writer.set_soa(soa_rows, obtained="direct", source_ref=f"probo:statement_of_applicability/{soa_id}")
+        else:
+            writer.warn(f"Statement of Applicability {soa_id} has no statements for the ISO 27001 framework's Annex A controls")
+    else:
+        writer.warn("no Statement of Applicability in Probo; request it from the organization (clause 6.1.3 d)")
+
+    # 4. Populations from people, third parties and the nonconformity register.
+    people = list(api.pages("listUsers", "users", organization_id=org))
+    hires, terms = [], []
+    for p in people:
+        contract = p.get("contract") or {}
+        s, e = parse_date(contract.get("start")), parse_date(contract.get("end"))
+        base_row = {"name": p.get("full_name", ""), "email": p.get("email_address", ""), "position": p.get("position") or "", "state": p.get("state", "")}
+        if s and start <= s <= end:
+            hires.append({"id": f"H-{slug(p['id'])[-8:]}", "date": s.isoformat(), **base_row})
+        if e and start <= e <= end:
+            terms.append({"id": f"T-{slug(p['id'])[-8:]}", "date": e.isoformat(), **base_row})
+    pop_hires = writer.add_population("hires", hires, title="New hires in period (Probo people, contract start)", source_ref="probo:listUsers")
+    pop_terms = writer.add_population("terminations", terms, title="Terminations in period (Probo people, contract end)", source_ref="probo:listUsers")
+    writer.add_bytes(json.dumps(people, indent=2), "people.json", title="Probo people export (all)", source_ref="probo:listUsers")
+
+    vendors = list(api.pages("listThirdParties", "thirdParties", organization_id=org))
+    writer.add_population(
+        "vendors",
+        [{"id": f"V-{slug(v['id'])[-8:]}", "date": (v.get("created_at") or "")[:10], "name": v["name"], "category": v.get("category") or ""} for v in vendors if v.get("created_at")],
+        title="Third parties (Probo)",
+        source_ref="probo:listThirdParties",
+    )
+
+    findings, findings_error = fetch("listFindings", "findings", organization_id=org)
+    pop_ncs = None
+    if findings_error is None:
+        export(findings, "findings-register", "Findings register (Probo): nonconformities, observations and exceptions", ["10.2"], "probo:listFindings")
+        ncs = [{"id": f.get("reference_id") or f"NC-{slug(f['id'])[-8:]}", "date": (f.get("identified_on") or f.get("created_at") or "")[:10],
+                "kind": f.get("kind"), "status": f.get("status"), "source": f.get("source") or ""}
+               for f in findings if f.get("kind") in ("MAJOR_NONCONFORMITY", "MINOR_NONCONFORMITY") and (f.get("identified_on") or f.get("created_at"))]
+        pop_ncs = writer.add_population("nonconformities", ncs, title="Nonconformities identified (Probo findings)", source_ref="probo:listFindings")
+
+    # Link populations to controls by keyword; the auditor confirms in testplan.csv.
+    for row in rows:
+        text = (row["title"] + " " + row["description"]).lower()
+        if any(k in text for k in ("terminat", "offboard", "deprovision")):
+            row["population"] = pop_terms
+        elif any(k in text for k in ("onboard", "new hire", "background check", "screening")):
+            row["population"] = pop_hires
+        elif pop_ncs and any(k in text for k in ("nonconformit", "corrective action")):
+            row["population"] = pop_ncs
+    writer.set_controls(rows)
+
+    # 5. Evidence attached to measures.
+    for m in ordered:
+        cid = control_id[m["id"]]
+        for ev in api.pages("listMeasureEvidences", "evidences", measure_id=m["id"]):
+            if ev.get("state") != "FULFILLED":
+                writer.warn(f"{cid}: evidence '{ev.get('description') or ev['id']}' is still requested, not provided")
+                continue
+            title = ev.get("description") or ev.get("reference_id") or ev["id"]
+            date = (ev.get("created_at") or "")[:10] or None
+            ref = f"probo:evidence/{ev['id']}"
+            if ev.get("type") == "LINK":
+                writer.add_bytes(f"[InternetShortcut]\nURL={ev['url']}\n", f"{slug(title)}.url", title=title, controls=[cid], date=date, obtained="client", source_ref=ref)
+                continue
+            # An empty url joined onto the instance root is the console page, not the file.
+            file_url = (ev.get("url") or "").strip()
+            filename = ""
+            if not file_url:
+                info = evidence_file(base, token, ev["id"])
+                if info:
+                    file_url = info["downloadUrl"]
+                    filename = info.get("fileName") or ""
+            if not file_url:
+                writer.warn(f"{cid}: file evidence '{title}' has no download URL")
+                continue
+            if not urllib.parse.urlparse(file_url).scheme:
+                file_url = urllib.parse.urljoin(base + "/", file_url)
+            if not filename:
+                filename = os.path.basename(urllib.parse.urlparse(file_url).path) or f"{slug(title)}.bin"
+            headers = {"Authorization": f"Bearer {token}"} if file_url.startswith(base) else None
+            writer.add_download(file_url, filename, title=title, headers=headers, controls=[cid], date=date, obtained="direct", source_ref=ref)
+
+    # Task comments are part of the control record. A screenshot without the comment is incomplete.
+    for m in ordered:
+        cid = control_id[m["id"]]
+        tasks = listed("listMeasureTasks", "tasks", measure_id=m["id"], order_by={"field": "CREATED_AT", "direction": "ASC"})
+        exported = []
+        for task in tasks:
+            comments, _err = fetch("listTaskComments", "task_comments", task_id=task["id"], order_by={"field": "CREATED_AT", "direction": "ASC"})
+            if comments:
+                exported.append({"task": task.get("name"), "state": task.get("state"),
+                                 "comments": [{"created_at": c.get("created_at"), "content": c.get("content")} for c in comments]})
+        if exported:
+            writer.add_bytes(json.dumps(exported, indent=2), f"task-comments-{slug(m['name'])}.json", title=f"Task comments: {m['name']}",
+                             controls=[cid], obtained="direct", source_ref=f"probo:listTaskComments/{m['id']}")
+
+    # 6. ISMS documents. Probo links a document to a framework control (clause or
+    # Annex A) or to a measure. Both are read; a document is stored once, with
+    # every control and requirement it reaches.
+    signers = {p["id"]: p.get("full_name") or p.get("email_address") or p["id"] for p in people}
+    docs: dict[str, dict] = {}
+    doc_controls: dict[str, set[str]] = {}
+    doc_reqs: dict[str, list[str]] = {}
+
+    def remember(doc: dict, control_ids: list[str], reqs: list[str]) -> None:
+        doc_id = doc.get("id")
+        if not doc_id:
+            return
+        docs.setdefault(doc_id, doc)
+        doc_controls.setdefault(doc_id, set()).update(control_ids)
+        doc_reqs.setdefault(doc_id, [])
+        doc_reqs[doc_id] += [x for x in reqs if x not in doc_reqs[doc_id]]
+
+    for req in requirements:
+        linked = [control_id[mid] for mid in requirement_measures.get(req["id"], [])]
+        for doc in listed("listControlDocuments", "documents", control_id=req["id"]):
+            remember(doc, linked, req_ids[req["id"]])
+    for m in ordered:
+        for doc in listed("listMeasureDocuments", "documents", measure_id=m["id"]):
+            remember(doc, [control_id[m["id"]]], [])
+    if soa_doc:
+        remember({"id": soa_doc}, [], ["6.1.3"])
+
+    for doc_id, doc in docs.items():
+        versions = listed("listDocumentVersions", "document_versions", document_id=doc_id)
+        published = [v for v in versions if v.get("status") == "PUBLISHED"] or versions
+        if not published:
+            writer.warn(f"document '{doc.get('title') or doc_id}' has no version")
+            continue
+        latest = max(published, key=lambda v: (v.get("major", 0), v.get("minor", 0)))
+        full = api.call("getDocumentVersion", id=latest["id"]).get("document_version", latest)
+        version_id = latest["id"]
+        quorums, quorum_error = fetch("listDocumentVersionApprovalQuorums", "approval_quorums",
+                                      document_version_id=version_id, order_by={"field": "CREATED_AT", "direction": "DESC"})
+        decisions: list = []
+        decision_error = quorum_error
+        if quorum_error is None:
+            for quorum in quorums:
+                got, err = fetch("listDocumentVersionApprovalDecisions", "approval_decisions",
+                                 quorum_id=quorum["id"], order_by={"field": "CREATED_AT", "direction": "ASC"})
+                decisions.extend(got)
+                if err and decision_error is None:
+                    decision_error = err
+        signatures, signature_error = fetch("listDocumentVersionSignatures", "document_version_signatures", document_version_id=version_id)
+        title = full.get("title") or doc.get("title") or "Document"
+        body = (
+            f"# {title}\n\n"
+            f"Version {full.get('major')}.{full.get('minor')}, status {full.get('status') or 'unknown'}, "
+            f"published {full.get('published_at') or 'n/a'}\n\n"
+            f"{approval_line(decisions, signers, decision_error)}\n\n"
+            f"{signature_line(signatures, signers, signature_error)}\n\n"
+            f"{full.get('content') or ''}"
+        )
+        writer.add_bytes(body, f"{slug(title)}.md", title=f"Policy: {title}", kind="policy", controls=sorted(doc_controls[doc_id]),
+                         requirements=doc_reqs[doc_id], date=(full.get("published_at") or "")[:10] or None,
+                         obtained="direct", source_ref=f"probo:document/{doc_id}")
+
+    # 7. Registers behind the ISMS clauses and common Annex A controls.
+    for tool, key, name, title, reqs in (
+        ("listRisks", "risks", "risk-register", "Risk register (Probo)", ["6.1.2", "8.2"]),
+        ("listTreatmentPlans", "treatment_plans", "risk-treatment-plans", "Risk treatment plans (Probo)", ["6.1.3", "8.3"]),
+        ("listObligations", "obligations", "obligations-register", "Legal and contractual obligations (Probo)", ["A.5.31"]),
+        ("listAssets", "assets", "asset-inventory", "Asset inventory (Probo)", ["A.5.9"]),
+        ("listData", "data", "data-inventory", "Data inventory and classification (Probo)", ["A.5.12"]),
+    ):
+        items, error = fetch(tool, key, organization_id=org)
+        if error is None:
+            export(items, name, title, reqs, f"probo:{tool}")
+
+    audits, audit_error = fetch("listAudits", "audits", organization_id=org)
+    if audit_error is None:
+        export(audits, "audits", "Audits recorded in Probo (internal and external)", ["9.2.1", "9.2.2", "A.5.35"], "probo:listAudits")
+        for audit in audits:
+            if not audit.get("has_report"):
+                continue
+            try:
+                url = api.call("getAuditReportUrl", id=audit["id"]).get("url")
+            except AuditError as e:
+                writer.warn(f"getAuditReportUrl: {e}")
+                continue
+            if url:
+                if not urllib.parse.urlparse(url).scheme:
+                    url = urllib.parse.urljoin(base + "/", url)
+                name = audit.get("report_filename") or f"{slug(audit.get('name') or audit['id'])}-report.pdf"
+                headers = {"Authorization": f"Bearer {token}"} if url.startswith(base) else None
+                writer.add_download(url, name, title=f"Audit report: {audit.get('name') or audit['id']}", headers=headers, requirements=["9.2.1", "9.2.2", "A.5.35"],
+                                    date=((audit.get("audit_dates") or {}).get("end") or "")[:10] or None, obtained="direct", source_ref=f"probo:audit/{audit['id']}")
+
+    campaigns, campaign_error = fetch("listAccessReviewCampaigns", "campaigns", organization_id=org)
+    if campaign_error is None:
+        export(campaigns, "access-review-campaigns", "Access review campaigns (Probo)", ["A.5.18"], "probo:listAccessReviewCampaigns")
+    # listAccessEntries returns "entries". decision_note is the reason on a defer, revoke or escalate.
+    entry_fields = (
+        "source_name", "email", "full_name", "account_type", "roles", "is_admin",
+        "mfa_status", "auth_method", "decision", "decision_note", "flags", "decided_at", "active", "last_login",
+    )
+    for camp in campaigns:
+        entries, err = fetch("listAccessEntries", "entries", campaign_id=camp["id"])
+        if err:
+            continue
+        slim = [{field: entry.get(field) for field in entry_fields} for entry in entries]
+        name = camp.get("name") or camp["id"]
+        writer.add_bytes(
+            json.dumps({"campaign_id": camp["id"], "name": name, "status": camp.get("status"), "entries": slim}, indent=2),
+            f"access-review-entries-{slug(name)}.json", title=f"Access review entries: {name}",
+            requirements=["A.5.18", "A.8.2"], source_ref=f"probo:listAccessEntries/{camp['id']}",
+        )
+
+    # 8. Draft ISMS scope and context from the organization context. The organization must complete it.
+    try:
+        ctx = api.call("getOrganizationContext", organization_id=org).get("organization_context") or {}
+    except AuditError as e:
+        writer.warn(f"getOrganizationContext: {e}")
+        ctx = {}
+    writer.set_isms({
+        "status": "draft",
+        "scope_statement": "",
+        "boundaries": ctx.get("architecture") or "",
+        "sites": [],
+        "context": "\n\n".join(x for x in (ctx.get("product"), ctx.get("customers")) if x),
+        "interested_parties": [],
+        "interfaces": "",
+        "outsourced": [],
+        "soa_version": "",
+        "changes": "",
+        "people": ctx.get("team") or "",
+        "processes": ctx.get("processes") or "",
+    }, obtained="direct")

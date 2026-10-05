@@ -1,0 +1,251 @@
+# Report wording for an AI Audit against ISO/IEC 27001:2022.
+#
+# The layout follows the content a certification body's audit report must have
+# (ISO/IEC 17021-1:2015, 9.4.8). The document is an AI Audit. It is not an
+# ISO/IEC 27001 certification audit, it is not issued by an accredited
+# certification body, and it is not ISO text.
+#
+# Placeholders: {org} {scope} {model} {type_label} {period} {period_dates}
+# {standard} {soa_version} {applicable} {excluded} {majors} {minors} {ofis}
+# {representative}
+
+standards:
+  iso27001: "ISO/IEC 27001:2022 Information security, cybersecurity and privacy protection — Information security management systems — Requirements, as amended by ISO/IEC 27001:2022/Amd 1:2024"
+  short: "ISO/IEC 27001:2022"
+  certification: "ISO/IEC 17021-1:2015 and ISO/IEC 27006-1:2024"
+  auditing: "ISO 19011:2018"
+
+audit_types:
+  stage1:
+    label: "Stage 1 audit (initial certification)"
+    period_heading: "Documentation reviewed as of"
+    objectives:
+      - "review the organization's ISMS documented information, including the scope, the risk assessment and treatment methodology and results, and the Statement of Applicability;"
+      - "evaluate the organization's understanding of the requirements of the standard and its preparedness for the Stage 2 audit;"
+      - "obtain information on the scope, the processes and locations covered, and the applicable legal, regulatory and contractual requirements;"
+      - "evaluate whether internal audits and management reviews are planned and performed;"
+      - "identify areas of concern that could be classified as nonconformities in the Stage 2 audit."
+  stage2:
+    label: "Stage 2 audit (initial certification)"
+    period_heading: "Records sampled from"
+    objectives:
+      - "evaluate the implementation, including the effectiveness, of the organization's ISMS;"
+      - "confirm that the ISMS conforms to all requirements of the standard and to the organization's own policies, objectives and procedures;"
+      - "evaluate performance monitoring and measurement against the information security objectives, internal auditing and management review;"
+      - "evaluate the operational control of the processes and controls declared in the Statement of Applicability;"
+      - "conclude on whether certification of the ISMS could be recommended."
+  surveillance:
+    label: "Surveillance audit"
+    period_heading: "Records sampled from"
+    objectives:
+      - "confirm that the ISMS continues to conform to the requirements of the standard and remains effective;"
+      - "review internal audits, management review, and actions taken on nonconformities identified previously;"
+      - "review changes to the ISMS, the risk assessment and the Statement of Applicability, and progress on planned continual improvement;"
+      - "evaluate continuing operational control through a sample of the Annex A controls declared applicable;"
+      - "conclude on whether continued certification could be recommended."
+  recertification:
+    label: "Recertification audit"
+    period_heading: "Records sampled from"
+    objectives:
+      - "confirm the continued conformity and effectiveness of the ISMS as a whole, and its continued relevance and applicability for the scope;"
+      - "evaluate the organization's demonstrated commitment to maintain the effectiveness and improvement of the ISMS;"
+      - "evaluate the effectiveness of the ISMS in achieving the organization's information security objectives and intended results;"
+      - "conclude on whether renewal of certification could be recommended."
+
+cover:
+  kicker: "AI Audit"
+  disclaimer: "Not an ISO/IEC 27001 certification audit. Not performed by an accredited certification body. No certificate is or can be issued on the basis of this report."
+  title: "AI Audit of the Information Security Management System of {org} against {standard}"
+  restricted: "This AI Audit is not an ISO/IEC 27001 certificate or certification audit report and must not be presented as one."
+
+section1:
+  title: "AI Audit Report"
+  notice: >-
+    This is an AI Audit prepared and signed by {model}. It uses ISO/IEC 27001:2022 as the audit criteria and
+    follows the structure of a certification audit. It is not an ISO/IEC 27001 certification audit, it was not
+    performed by a certification body accredited to {certification}, and no certificate can be issued on its basis.
+  notice_unsigned: >-
+    This is an AI Audit. It has not been signed yet. It uses ISO/IEC 27001:2022 as the audit criteria and follows
+    the structure of a certification audit. It is not an ISO/IEC 27001 certification audit, it was not performed by
+    a certification body accredited to {certification}, and no certificate can be issued on its basis.
+  addressee: "To the Management of {org}"
+  facts_heading: "Audit Details"
+  facts:
+    organization: "Organization"
+    representative: "Organization's representative"
+    audit_type: "Type of audit"
+    criteria: "Audit criteria"
+    records: "Period"
+    auditor: "Audit performed and signed by"
+    method: "Audit method"
+    method_value: "Remote review of a hashed evidence bundle; no site visit and no interviews"
+  criteria: >-
+    {standard_full}; the organization's ISMS documented information, including the Statement of Applicability{soa_version};
+    and the legal, regulatory and contractual requirements the organization has identified as applicable.
+  objectives_heading: "Audit Objectives"
+  objectives_intro: "The objectives of this audit were to:"
+  scope_heading: "Audit Scope"
+  scope: >-
+    The ISMS of {org} with the scope: {scope}
+  coverage:
+    full: >-
+      The audit covered every requirement of clauses 4 to 10 of the standard and the {applicable} Annex A controls the
+      Statement of Applicability declares applicable. It did not cover the {excluded} Annex A controls the Statement of
+      Applicability excludes, other than reviewing the justification for their exclusion.
+    surveillance: >-
+      As a surveillance audit, this audit covered the clauses reviewed at every surveillance (internal audit,
+      management review, nonconformity and corrective action, changes, objectives, operational control, risk
+      assessment and treatment) and a sample of {sampled} of the {applicable} Annex A controls the Statement of
+      Applicability declares applicable. Section V shows which.
+  method_heading: "Audit Method"
+  method: >-
+    The connector named in the engagement pulled the organization's evidence into a bundle, and every file was hashed
+    on receipt. Each control the organization operates, and each requirement no control is mapped to, was audited
+    against the documented information and records in that bundle by inspection and, where possible, reperformance.
+    Where an activity occurred many times, items were selected at random using a recorded seed. Findings are recorded
+    against a specific requirement with the objective evidence they rest on, and graded as major nonconformities,
+    minor nonconformities or opportunities for improvement.
+  sampling: >-
+    Auditing is based on a sampling process of the available information. Nonconformities may exist that this audit
+    did not identify, and the absence of a finding is not a statement that none exists.
+  summary_heading: "Summary of Findings"
+  summary_counts: "This audit identified {majors} major nonconformities, {minors} minor nonconformities and {ofis} opportunities for improvement. Each is set out in Section III."
+  grades:
+    major: "Major nonconformity: a nonconformity that affects the capability of the ISMS to achieve its intended results."
+    minor: "Minor nonconformity: a nonconformity that does not affect the capability of the ISMS to achieve its intended results."
+    ofi: "Opportunity for improvement: a requirement is met, but the audit identified a way the ISMS could be improved."
+  stage1_grades: "At Stage 1, findings are areas of concern. Their grade shows how they would be classified if still present at Stage 2."
+  conformity_heading: "Conformity and Effectiveness of the ISMS"
+  ia_mr_heading: "Internal Audit and Management Review"
+  ia_mr:
+    internal_audit: "Internal audit (clause 9.2): {result}"
+    management_review: "Management review (clause 9.3): {result}"
+  scope_appropriate_heading: "Appropriateness of the Scope"
+  scope_appropriate:
+    "yes": "The ISMS scope is appropriate to the organization, its context and the requirements of its interested parties."
+    "no": "The ISMS scope is not appropriate in its current form."
+  objectives_met_heading: "Fulfilment of the Audit Objectives"
+  objectives_met:
+    "yes": "The audit objectives were fulfilled."
+    "no": "The audit objectives were not fully fulfilled because of the scope limitations described below."
+  limitations_heading: "Scope Limitations"
+  recommendation_heading: "Conclusion"
+  recommendation:
+    stage1:
+      recommended: "The ISMS is ready for the Stage 2 audit. No areas of concern were identified."
+      recommended-with-actions: "The ISMS is ready for the Stage 2 audit, provided the areas of concern in Section III are addressed before it begins. If still present at Stage 2, they could be raised as nonconformities."
+      not-recommended: "The ISMS is not ready for the Stage 2 audit. The major areas of concern in Section III must be resolved, and Stage 1 repeated in part or in full, before Stage 2."
+      no-conclusion: "No conclusion on readiness for the Stage 2 audit is stated, because of the scope limitations described above."
+    stage2:
+      recommended: "The ISMS conforms to the requirements of ISO/IEC 27001:2022 and is effectively implemented. A certification body performing this audit could recommend certification."
+      recommended-with-actions: "The ISMS conforms to the requirements of ISO/IEC 27001:2022 and is effectively implemented, except for the minor nonconformities in Section III, which do not affect the capability of the ISMS to achieve its intended results. A recommendation for certification would depend on the organization submitting an acceptable plan of correction and corrective action for each of them."
+      not-recommended: "The major nonconformities in Section III affect the capability of the ISMS to achieve its intended results. Certification would not be recommended until correction and corrective action for each major nonconformity are implemented and verified."
+      no-conclusion: "No conclusion on certification is stated, because of the scope limitations described above."
+    surveillance:
+      recommended: "The ISMS continues to conform to the requirements of ISO/IEC 27001:2022 and to be effectively implemented. Continued certification could be recommended."
+      recommended-with-actions: "The ISMS continues to conform and to be effectively implemented, except for the minor nonconformities in Section III. Continued certification could be recommended, subject to an acceptable plan of correction and corrective action for each of them."
+      not-recommended: "The major nonconformities in Section III affect the capability of the ISMS to achieve its intended results. Continued certification would not be recommended until correction and corrective action are implemented and verified; a certification body could suspend certification in the meantime."
+      no-conclusion: "No conclusion on continued certification is stated, because of the scope limitations described above."
+    recertification:
+      recommended: "The ISMS continues to conform to the requirements of ISO/IEC 27001:2022 and is effective as a whole. Renewal of certification could be recommended."
+      recommended-with-actions: "The ISMS continues to conform and is effective as a whole, except for the minor nonconformities in Section III. Renewal of certification could be recommended, subject to an acceptable plan of correction and corrective action for each of them."
+      not-recommended: "The major nonconformities in Section III affect the capability of the ISMS to achieve its intended results. Renewal of certification would not be recommended until correction and corrective action are implemented and verified before the current certificate expires."
+      no-conclusion: "No conclusion on renewal of certification is stated, because of the scope limitations described above."
+  ai_disclaimer: >-
+    These conclusions are the model's, based only on the evidence in the bundle. A certification decision can only be
+    taken by an accredited certification body, after its own audit.
+  independence_heading: "Independence and Limitations"
+  independence: >-
+    The model that signs this AI Audit is not an accredited certification body, is not a certified ISMS auditor, and is
+    not independent in the sense required of a certification body under {certification}. It did not visit any site or
+    interview personnel; it relied on the documented information and records the organization's systems provided.
+  restricted_use_heading: "Use of This Report"
+  restricted_use: >-
+    This report is intended for the management of {org} and for parties {org} chooses to share it with to describe
+    the state of its ISMS. It is an AI Audit. It is not an ISO/IEC 27001 certificate or a certification audit report,
+    it does not entitle {org} to claim certification or to use any certification mark, and it must not be presented
+    as either.
+  signature_footer: "Not an ISO/IEC 27001 certification."
+
+section2:
+  title: "Scope and Context of the ISMS"
+  intro: >-
+    This section is the organization's description of its ISMS. It is the organization's documented information,
+    not a conclusion of this AI Audit.
+  unapproved: "This description is not marked management-approved."
+  omitted: >-
+    A description of the ISMS scope and context for readers of this report has not been provided. Text pulled from
+    the compliance system is evidence and is not printed here.
+  headings:
+    scope_statement: "Scope of the ISMS"
+    boundaries: "Boundaries"
+    sites: "Locations"
+    context: "Internal and External Issues"
+    interested_parties: "Interested Parties and Their Requirements"
+    interfaces: "Interfaces and Dependencies"
+    outsourced: "Outsourced Processes and Key Suppliers"
+    soa_version: "Statement of Applicability"
+    changes: "Significant Changes Since the Last Audit"
+
+section3:
+  title: "Audit Findings"
+  intro: >-
+    Each finding is recorded against one requirement of the standard, with a statement of the nonconformity and the
+    objective evidence it rests on. This AI Audit does not suggest the cause of a nonconformity or its solution; the
+    organization is expected to analyse the cause and to plan correction and corrective action.
+  intro_stage1: >-
+    At Stage 1, findings are areas of concern. Each is recorded against one requirement of the standard, with the
+    objective evidence it rests on, and graded as it would be if still present at the Stage 2 audit.
+  none: "No nonconformities or opportunities for improvement were identified."
+  labels:
+    requirement: "Requirement"
+    statement: "Statement"
+    statement_ofi: "Opportunity"
+    evidence: "Objective evidence"
+    units: "Related audit units"
+  grade_names:
+    major: "Major nonconformity"
+    minor: "Minor nonconformity"
+    ofi: "Opportunity for improvement"
+
+section4:
+  title: "Requirements, Controls and Audit Results"
+  intro: >-
+    This section lists, for each requirement in scope, the controls {org} operates to meet it, the procedures this
+    AI Audit performed and the results. The controls are the responsibility of {org}; the procedures and results are
+    the responsibility of this AI Audit. Where no control is mapped to a requirement, the requirement was audited
+    directly against the organization's documented information and records.
+  methods: >-
+    Procedures used one or more of these methods. Inspection: examining documents, records and system
+    configurations. Reperformance: independently executing a control and comparing the result. Observation: examining
+    a system's live behaviour as recorded in an export. Inquiry: considering written statements from the organization;
+    inquiry alone was never relied on. Where an activity occurred many times, a sample was selected at random using a
+    recorded seed, with sample sizes based on the frequency of the activity and the size of the population.
+  columns: ["Requirement", "Unit", "Control activity", "Procedures performed", "Result"]
+  conforming: "No deviations noted."
+  not_audited: "Not audited. {reason}"
+  design_gap: "Not suitably designed. {reason}"
+  not_sampled: "Not covered in this surveillance audit."
+
+section5:
+  title: "Statement of Applicability"
+  intro: >-
+    The organization's Statement of Applicability{soa_version} declares {applicable} of the 93 Annex A controls
+    applicable and excludes {excluded}. The table shows each control, the organization's decision, its justification
+    for an exclusion, and the result of this audit. Justifications are the organization's.
+  missing: >-
+    The organization did not provide a Statement of Applicability in the evidence. Every Annex A control was treated as
+    applicable for this audit.
+  columns: ["Control", "Title", "Applicable", "Justification for exclusion", "Audit result"]
+  results:
+    conforming: "Conforming"
+    excluded: "Excluded"
+    not_audited: "Not audited"
+    not_sampled: "Not in this audit's sample"
+
+section6:
+  title: "The Organization's Response to Findings"
+  intro: >-
+    The information in this section is the organization's own response to the findings, including correction and
+    corrective action taken or planned. It has not been verified by this AI Audit unless a later audit says so.
+  none: "The organization has not provided a response to the findings."

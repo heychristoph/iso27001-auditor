@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "engagement.yaml",
+  "type": "object",
+  "required": ["schema_version", "organization", "scope", "auditor", "audit_type", "source", "sampling_seed"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "organization": {"type": "string", "minLength": 1, "description": "Legal name of the organization whose ISMS is audited, as printed"},
+    "scope": {"type": "string", "minLength": 1, "description": "The ISMS scope statement as a certificate would print it, in one sentence"},
+    "auditor": {"type": "string", "minLength": 1, "description": "Always \"AI Audit\". The signing model is signoff.model."},
+    "audit_type": {"enum": ["stage1", "stage2", "surveillance", "recertification"]},
+    "period": {
+      "type": "object",
+      "description": "Records period sampled (stage2, surveillance, recertification)",
+      "required": ["start", "end"],
+      "additionalProperties": false,
+      "properties": {
+        "start": {"type": "string", "format": "date"},
+        "end": {"type": "string", "format": "date"}
+      }
+    },
+    "as_of": {"type": "string", "format": "date", "description": "Date of the documentation review (stage1)"},
+    "source": {
+      "type": "object",
+      "required": ["connector"],
+      "additionalProperties": false,
+      "properties": {
+        "connector": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "options": {"type": "object"}
+      }
+    },
+    "management": {
+      "type": "object",
+      "description": "The organization's representative named in the report (ISO/IEC 17021-1 9.4.8.2 b). Real values from the evidence, never a placeholder.",
+      "required": ["name", "title"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "title": {"type": "string", "minLength": 1}
+      }
+    },
+    "sampling_seed": {"type": "integer"},
+    "signoff": {
+      "type": ["object", "null"],
+      "description": "Written only by `iso27001.py signoff --model`. The model that ran the AI Audit.",
+      "required": ["model", "date", "digest"],
+      "additionalProperties": false,
+      "properties": {
+        "model": {"type": "string", "minLength": 1},
+        "date": {"type": "string", "format": "date"},
+        "digest": {"type": "string"}
+      }
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"audit_type": {"const": "stage1"}}}, "then": {"required": ["as_of"]}, "else": {"required": ["period"]}}
+  ]
+}

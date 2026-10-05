@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "findings.json",
+  "type": "object",
+  "required": ["schema_version", "findings", "scope_limitations", "recommendation", "summary", "scope_appropriate", "prepared_by"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "grade", "requirement", "statement", "objective_evidence", "deviations", "evidence"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "pattern": "^(NC|OFI)-[0-9]{2,}$", "description": "NC-01 for a major or minor nonconformity, OFI-01 for an opportunity for improvement"},
+          "grade": {"enum": ["major", "minor", "ofi"]},
+          "requirement": {"type": "string", "description": "The one clause or Annex A control the finding is recorded against (e.g. 9.3.2, A.5.18)"},
+          "statement": {"type": "string", "minLength": 1, "description": "Statement of the nonconformity: what requirement was not fulfilled. Printed."},
+          "objective_evidence": {"type": "string", "minLength": 1, "description": "The objective evidence the finding is based on, with counts, item IDs and dates. Printed."},
+          "deviations": {
+            "type": "array",
+            "description": "The workpaper deviations this finding grades",
+            "items": {
+              "type": "object",
+              "required": ["control", "item"],
+              "additionalProperties": false,
+              "properties": {
+                "control": {"type": "string"},
+                "item": {"type": "string"}
+              }
+            }
+          },
+          "evidence": {"type": "array", "items": {"type": "string"}, "description": "Artifact IDs"},
+          "management_response": {"type": ["string", "null"], "description": "Correction and corrective action the organization provided. null until it does."}
+        }
+      }
+    },
+    "scope_limitations": {"type": "array", "items": {"type": "string"}},
+    "recommendation": {"enum": ["recommended", "recommended-with-actions", "not-recommended", "no-conclusion"]},
+    "summary": {"type": "string", "minLength": 1, "description": "Statement on the conformity and effectiveness of the ISMS (ISO/IEC 17021-1 9.4.8.3 a). Printed."},
+    "scope_appropriate": {"type": "boolean", "description": "Conclusion on the appropriateness of the ISMS scope (9.4.8.3 b)"},
+    "scope_note": {"type": "string", "description": "Why the scope is or is not appropriate. Required when scope_appropriate is false. Printed."},
+    "prepared_by": {"type": "string"}
+  }
+}

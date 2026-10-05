@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 60" fill="none">
+  <path d="M53.749 16.288 V43.711 L30 57.423 L6.251 43.711 V16.288 L30 2.576 Z" stroke="#141e12" stroke-width="1" stroke-linejoin="miter"/>
+  <path d="M50.599 18.107 L50.599 41.892 L30.000 53.786 L9.401 41.892 L9.401 18.107 L30.000 6.213 Z" stroke="#141e12" stroke-width="1" stroke-linejoin="miter"/>
+  <g fill="#141e12" font-family="Libertinus Serif" text-anchor="middle">
+    <text x="30" y="22.6" font-size="5.2" font-weight="bold">ISO</text>
+    <text x="30" y="28.4" font-size="5.2" font-weight="bold">27001</text>
+    <text x="30" y="33.4" font-size="3.6">criteria</text>
+    <text x="30" y="40.2" font-size="5.6" font-weight="bold">AI</text>
+    <text x="30" y="44.6" font-size="3.6">audited</text>
+  </g>
+</svg>
